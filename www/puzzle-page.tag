@@ -553,8 +553,12 @@
 
             if (e.keyCode == 229) // Returned by soft keyboard
                 return;           // Let through and deal with in focuser input listener.
-            if (e.keyCode >= 65 && e.keyCode <= 90 || e.keyCode == 32) { // space
-                self.insertLetter(String.fromCharCode(e.keyCode));
+            if ((e.keyCode >= 65 && e.keyCode <= 90) || (e.key >= 'a' && e.key <= 'z') || e.keyCode == 32) { // space
+                if (e.keyCode)
+                    var letter = String.fromCharCode(e.keyCode);
+                else
+                    var letter = e.key;
+                self.insertLetter(letter);
                 self.moveCursor(1, false);
             } else if (e.keyCode == 188) { // comma
                 self.setSeldir();
@@ -584,7 +588,7 @@
                     self.moveCursor(-1, false);
                 self.insertLetter(" ");
             } else {
-                console.log(e.keyCode);
+                console.log("Unrecognized keyCode: " + e.keyCode + ", key: " + e.key);
             }
             e.preventDefault();
         });

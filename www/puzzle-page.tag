@@ -36,7 +36,7 @@
             <tr each={ row, i in puzzle.grid }><!--
              --><td each={ cell, j in row } class={ parent.parent.gridClass(cell) } id={ 'r' + i + 'c' + j }><!--
                  --><span class="number" if={ cell.number }>{ cell.number }</span><!--
-                 --><span class="letter">{ parent.parent.fill[i][j] }</span><!--
+                 --><canvas width="96" height="96" class="letter">{ parent.parent.fill[i][j] }</canvas><!--
              --></td><!--
          --></tr>
         </table>
@@ -71,6 +71,7 @@
         self.fill = [];
         self.selr = 0;
         self.selc = 0;
+        self.selcanvas = null;
         self.seldir = "across";
         self.fitzoom = 1;
         self.startzoom = 1;
@@ -83,6 +84,85 @@
 
         self.transformName = (document.body.style.transform == "") ? "transform" : "webkitTransform";
         self.focuser = document.querySelector("#focuser");
+
+        self.isTouchSupported = 'ontouchstart' in window;
+        self.isPointerSupported = window.PointerEvent;
+        self.isMSPointerSupported = window.MSPointerEvent;
+
+        self.downEvent = self.isTouchSupported ? 'touchstart' : (self.isPointerSupported ? 'pointerdown' : (self.isMSPointerSupported ? 'MSPointerDown' : 'mousedown'));
+        self.moveEvent = self.isTouchSupported ? 'touchmove' : (self.isPointerSupported ? 'pointermove' : (self.isMSPointerSupported ? 'MSPointerMove' : 'mousemove'));
+        self.upEvent = self.isTouchSupported ? 'touchend' : (self.isPointerSupported ? 'pointerup' : (self.isMSPointerSupported ? 'MSPointerUp' : 'mouseup'));
+
+        self.drag = false;
+        self.lastX = null;
+        self.lastY = null;
+
+        dot(x, y, canvas) {
+                var r = 5;
+                var ctx = canvas.getContext("2d");
+                ctx.beginPath()
+                ctx.moveTo(x + r, y)
+                ctx.arc(x, y, r, 0, Math.PI * 2)
+                ctx.fill()
+        }
+
+        draw(e) {
+                e.preventDefault()
+                if (self.drag) {
+                        var rect = self.selcanvas.getBoundingClientRect();
+                        if (self.isTouchSupported) {
+                                var pageX = e.targetTouches[0].pageX;
+                                var x = pageX - rect.left;
+                                var y = e.targetTouches[0].pageY - rect.top
+                        } else {
+                                // TODO: Does offset work, or do we need to use the rect?
+                                var x = (e.offsetX || e.layerX - self.selcanvas.offsetLeft);
+                                var y = (e.offsetY || e.layerY - self.selcanvas.offsetTop);
+                        }
+                        // Scale x and y.  This is the canvas width divided by the CSS width.  TODO: Look up sizes automatically
+                        x *= 4; y *= 4;
+                        if (x == -1) {
+                                console.log("Ignoring -1 x value");
+                                return;
+                        } else if (y == -1) {
+                                console.log("Ignoring -1 y value");
+                                return;
+                        }
+                        
+                        if (self.lastX !== null && self.lastY !== null){
+                                var dx = x - self.lastX, dy = y - self.lastY;
+                                var d = Math.sqrt(dx * dx + dy * dy);
+                                for(var i = 1; i < d; i += 2){
+                                        self.dot(self.lastX + dx / d * i, self.lastY + dy / d * i, self.selcanvas)
+                                }
+                        }
+                        self.dot(x, y, self.selcanvas)
+
+                        self.lastX = x;
+                        self.lastY = y;
+                }
+        }
+
+        startDraw(e) {
+            var el = e.target;
+            while (!el.id)
+                el = el.parentElement;
+            var coords = coordsFromID(el.id);
+
+            self.selcanvas = getCellEl(coords[0], coords[1], " .letter");
+
+            self.drag = true;
+            self.lastX = null;
+            self.lastY = null;
+            e.preventDefault();
+            self.draw(e)
+        }
+
+        endDraw(e) {
+            self.drag = false;
+            e.preventDefault();
+            //runOCR();
+        }
 
         enumerate(list) {
             retval = []
@@ -240,7 +320,13 @@
             }
             self.fill[y][x] = v;
             var el = getCellEl(y, x, " .letter");
-            el.textContent = v;
+
+            //el.textContent = v;
+            var ctx = el.getContext("2d");
+            ctx.font = "80px Comic Sans MS";
+            ctx.textAlign = "center";
+            ctx.fillText(v, 48, 70);
+
             el.classList.remove("error");
             if (!skipcheck)
                 self.checkAndSave();
@@ -634,8 +720,13 @@
             self.fixView();
         });
 
+        self.gridcontainer.addEventListener(self.downEvent, self.startDraw, false);
+        self.gridcontainer.addEventListener(self.moveEvent, self.draw, false);
+        self.gridcontainer.addEventListener(self.upEvent, self.endDraw, false);
+
         var hammer = Hammer(self.gridcontainer, { prevent_default: true });
 
+/*
         hammer.on("dragstart", self.setStart);
         hammer.on("drag", function (e) {
             self.gridoffset = [self.startoffset[0] + e.gesture.deltaY, self.startoffset[1] + e.gesture.deltaX];
@@ -644,6 +735,7 @@
         hammer.on("dragend", function (e) {
             self.fixView(true);
         });
+*/
 
         hammer.on("tap", function (e) {
             var el = e.target;

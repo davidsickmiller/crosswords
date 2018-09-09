@@ -36,7 +36,7 @@
             <tr each={ row, i in puzzle.grid }><!--
              --><td each={ cell, j in row } class={ parent.parent.gridClass(cell) } id={ 'r' + i + 'c' + j }><!--
                  --><span class="number" if={ cell.number }>{ cell.number }</span><!--
-                 --><span class="letter">{ parent.parent.fill[i][j] }</span><!--
+                 --><canvas width="96" height="96" class="letter"></canvas><!--
              --></td><!--
          --></tr>
         </table>
@@ -71,6 +71,7 @@
         self.fill = [];
         self.selr = 0;
         self.selc = 0;
+        self.selcanvas = null;
         self.seldir = "across";
         self.fitzoom = 1;
         self.startzoom = 1;
@@ -83,6 +84,99 @@
 
         self.transformName = (document.body.style.transform == "") ? "transform" : "webkitTransform";
         self.focuser = document.querySelector("#focuser");
+
+        self.isTouchSupported = 'ontouchstart' in window;
+        self.isPointerSupported = window.PointerEvent;
+        self.isMSPointerSupported = window.MSPointerEvent;
+
+        self.downEvent = self.isTouchSupported ? 'touchstart' : (self.isPointerSupported ? 'pointerdown' : (self.isMSPointerSupported ? 'MSPointerDown' : 'mousedown'));
+        self.moveEvent = self.isTouchSupported ? 'touchmove' : (self.isPointerSupported ? 'pointermove' : (self.isMSPointerSupported ? 'MSPointerMove' : 'mousemove'));
+        self.upEvent = self.isTouchSupported ? 'touchend' : (self.isPointerSupported ? 'pointerup' : (self.isMSPointerSupported ? 'MSPointerUp' : 'mouseup'));
+
+        self.drag = false;
+        self.lastX = null;
+        self.lastY = null;
+
+        dot(x, y, canvas) {
+            var r = 5;
+            var ctx = canvas.getContext("2d");
+            ctx.beginPath()
+            ctx.moveTo(x + r, y)
+            ctx.arc(x, y, r, 0, Math.PI * 2)
+            ctx.fill()
+        }
+
+        draw(e) {
+            e.preventDefault()
+            if (self.drag) {
+                var rect = self.selcanvas.getBoundingClientRect();
+                if (self.isTouchSupported) {
+                    var pageX = e.targetTouches[0].pageX;
+                    var x = pageX - rect.left;
+                    var y = e.targetTouches[0].pageY - rect.top
+                } else {
+                    // TODO: Does offset work, or do we need to use the rect?
+                    var x = (e.offsetX || e.layerX - self.selcanvas.offsetLeft);
+                    var y = (e.offsetY || e.layerY - self.selcanvas.offsetTop);
+                }
+                // Scale x and y.  This is the canvas width divided by the CSS width.  TODO: Look up sizes automatically
+                x *= 4; y *= 4;
+                if (x == -1) {
+                    console.log("Ignoring -1 x value");
+                    return;
+                } else if (y == -1) {
+                    console.log("Ignoring -1 y value");
+                    return;
+                }
+
+                if (self.lastX !== null && self.lastY !== null){
+                    var dx = x - self.lastX, dy = y - self.lastY;
+                    var d = Math.sqrt(dx * dx + dy * dy);
+                    for(var i = 1; i < d; i += 2){
+                        self.dot(self.lastX + dx / d * i, self.lastY + dy / d * i, self.selcanvas)
+                    }
+                }
+                self.dot(x, y, self.selcanvas)
+
+                self.lastX = x;
+                self.lastY = y;
+            }
+        }
+
+        startDraw(e) {
+            var el = e.target;
+            while (!el.id)
+                el = el.parentElement;
+            var coords = coordsFromID(el.id);
+
+            self.selcanvas = getCellEl(coords[0], coords[1], " .letter");
+            self.selectCell(coords[0], coords[1]);
+
+            self.drag = true;
+            self.lastX = null;
+            self.lastY = null;
+            e.preventDefault();
+            self.draw(e)
+        }
+
+        endDraw(e) {
+            self.drag = false;
+
+            var ctx = self.selcanvas.getContext("2d");
+            var typedArray = ctx.getImageData(0, 0, 96, 96).data;
+            // Typed array stringify to objects (e.g. {"0": 182, "1": 110, ...}) which is not only
+            // generally stupid, but specifically interferes with the deserialization later.  So
+            // let's convert to a regular array before saving.
+            var regularArray = [];
+            typedArray.forEach(function(val) {regularArray.push(val);});
+            self.fill[self.selr][self.selc].pixels = regularArray;
+
+            self.selcanvas = null;
+            e.preventDefault();
+            //runOCR();
+
+            self.checkAndSave();
+        }
 
         enumerate(list) {
             retval = []
@@ -134,7 +228,7 @@
                 var cells = document.querySelectorAll("." + dir + num);
                 for (var i=0; i<cells.length; i++) {
                     var coords = coordsFromID(cells[i].id);
-                    if (self.fill[coords[0]][coords[1]] == " ") {
+                    if (self.fill[coords[0]][coords[1]].letter == null) {
                         self.selectCell(coords[0], coords[1]);
                         return;
                     }
@@ -218,7 +312,7 @@
                 return;
             for (var i=0; i<self.puzzle.nrow; i++)
                 for (var j=0; j<self.puzzle.ncol; j++)
-                    if (self.puzzle.grid[i][j].solution && self.fill[i][j] != self.puzzle.grid[i][j].solution)
+                    if (self.puzzle.grid[i][j].solution && self.fill[i][j].letter != self.puzzle.grid[i][j].solution)
                         return;
             tableClasses.add("solved");
             self.solved = true;
@@ -238,9 +332,18 @@
                 else
                     return;
             }
-            self.fill[y][x] = v;
+            self.fill[y][x].letter = v;
             var el = getCellEl(y, x, " .letter");
-            el.textContent = v;
+            if (!el) {
+                console.log("insertLetter(" + v + ", " + y + ", " + x + ") could not find element");
+                return;
+            }
+
+            var ctx = el.getContext("2d");
+            ctx.font = "80px Comic Sans MS";
+            ctx.textAlign = "center";
+            ctx.fillText(v, 48, 70);
+
             el.classList.remove("error");
             if (!skipcheck)
                 self.checkAndSave();
@@ -399,7 +502,7 @@
             self.grid.classList.add("checking");
             for (var i=0; i<self.puzzle.nrow; i++)
                 for (var j=0; j<self.puzzle.ncol; j++)
-                    if (self.fill[i][j] != self.puzzle.grid[i][j].solution && self.fill[i][j] != " ")
+                    if (self.fill[i][j].letter != self.puzzle.grid[i][j].solution && self.fill[i][j].letter != null)
                         getCellEl(i, j, " .letter").classList.add("error");
             self.grid.offsetWidth; // Force layout, to allow for class change to take effect.
             self.grid.classList.remove("checking");
@@ -435,9 +538,10 @@
                 for (var i=0; i<self.puzzle.nrow; i++) {
                     self.fill[i] = [];
                     for (var j=0; j<self.puzzle.ncol; j++)
-                        self.fill[i][j] = " ";
+                        self.fill[i][j] = {"letter": null, pixels: null};
                 }
             } else {
+                // TODO: Convert from the old format to the new format
                 self.fill = sfill;
             }
 
@@ -455,6 +559,38 @@
                 self.checkAndSave();
                 self.selectCell(self.selr, self.selc);
                 self.setGeometry();
+
+                for (var i = 0; i < self.fill.length; i++) {
+                    for (var j = 0; j < self.fill[i].length; j++) {
+                        var el = getCellEl(i, j, " .letter");
+                        if (!el) {
+                            console.log("update handler could not find element at " + i + ", " + j);
+                            continue;
+                        }
+                        var ctx = el.getContext("2d");
+
+                        if (self.fill[i][j].pixels) {
+                            var pixels = self.fill[i][j].pixels;
+                            var imageData = ctx.createImageData(96, 96);
+                            if (imageData.data.set) {
+                                imageData.data.set(pixels);
+                            } else {
+                                // IE9
+                                self.fill[i][j].pixels.foreach(function(val, iPixel) {
+                                    imageData.data[iPixel] = val;
+                                });
+                            }
+                            ctx.putImageData(imageData, 0, 0);
+                            console.log("loaded pixel data at " + i + ", " + j);
+                        } else if (self.fill[i][j].letter) {
+                            ctx.font = "80px Comic Sans MS";
+                            ctx.textAlign = "center";
+                            ctx.fillText(self.fill[i][j].letter, 48, 70);
+                            console.log("loaded letter data (" + self.fill[i][j].letter + ") at " + i + ", " + j);
+                        }
+                    }
+                }
+
                 self.focuser.focus();
             } else {
                 self.focuser.blur();
@@ -553,8 +689,12 @@
 
             if (e.keyCode == 229) // Returned by soft keyboard
                 return;           // Let through and deal with in focuser input listener.
-            if (e.keyCode >= 65 && e.keyCode <= 90 || e.keyCode == 32) { // space
-                self.insertLetter(String.fromCharCode(e.keyCode));
+            if ((e.keyCode >= 65 && e.keyCode <= 90) || (e.key >= 'a' && e.key <= 'z') || e.keyCode == 32) { // space
+                if (e.keyCode)
+                    var letter = String.fromCharCode(e.keyCode);
+                else
+                    var letter = e.key;
+                self.insertLetter(letter);
                 self.moveCursor(1, false);
             } else if (e.keyCode == 188) { // comma
                 self.setSeldir();
@@ -564,7 +704,7 @@
             } else if (e.keyCode >= 37 && e.keyCode <= 40) { // left, up, right, down
                 var dir = (e.keyCode % 2) ? "across" : "down";
                 var inc = (e.keyCode < 39) ? -1 : 1;
-                if (self.seldir != dir && self.fill[self.selr][self.selc] == " " && self.canChangeDir(dir)) {
+                if (self.seldir != dir && self.fill[self.selr][self.selc].letter == null && self.canChangeDir(dir)) {
                     // Change direction only if cell is empty and able
                     self.setSeldir(dir);
                     self.selectCell(self.selr, self.selc);
@@ -580,11 +720,11 @@
                     coords = coordsFromID(cell.id);
                 self.selectCell(coords[0], coords[1]);
             } else if (e.keyCode == 8) { // backspace
-                if (self.fill[self.selr][self.selc] == " ")
+                if (self.fill[self.selr][self.selc].letter == null)
                     self.moveCursor(-1, false);
-                self.insertLetter(" ");
+                self.insertLetter(null);        // TODO: What does this do... just erase the letter?
             } else {
-                console.log(e.keyCode);
+                console.log("Unrecognized keyCode: " + e.keyCode + ", key: " + e.key);
             }
             e.preventDefault();
         });
@@ -630,8 +770,13 @@
             self.fixView();
         });
 
+        self.gridcontainer.addEventListener(self.downEvent, self.startDraw, false);
+        self.gridcontainer.addEventListener(self.moveEvent, self.draw, false);
+        self.gridcontainer.addEventListener(self.upEvent, self.endDraw, false);
+
         var hammer = Hammer(self.gridcontainer, { prevent_default: true });
 
+/*
         hammer.on("dragstart", self.setStart);
         hammer.on("drag", function (e) {
             self.gridoffset = [self.startoffset[0] + e.gesture.deltaY, self.startoffset[1] + e.gesture.deltaX];
@@ -640,6 +785,7 @@
         hammer.on("dragend", function (e) {
             self.fixView(true);
         });
+*/
 
         hammer.on("tap", function (e) {
             var el = e.target;

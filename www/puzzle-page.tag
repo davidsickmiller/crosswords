@@ -340,6 +340,9 @@
             }
 
             var ctx = el.getContext("2d");
+            // Erase anything that might already be there
+            ctx.clearRect(0, 0, el.width, el.height);
+            // Now write in the letter
             ctx.font = "80px Comic Sans MS";
             ctx.textAlign = "center";
             ctx.fillText(v, 48, 70);
